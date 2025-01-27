@@ -1,0 +1,5 @@
+(:name google-gemini
+       :description "Google Gemini interface"
+       :type github
+       :pkgname "emacs-openai/google-gemini"
+       :build `(("make")))
