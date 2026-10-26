@@ -1,4 +1,4 @@
-;;; el-get --- Manage the external elisp bits and pieces you depend upon
+;;; el-get --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -13,6 +13,8 @@
 ;;     Please see the README.md file from the same distribution
 
 (require 'el-get-core)
+
+(defvar el-get-dir)
 
 (defcustom el-get-bzr-branch-hook nil
   "Hook run after bzr branch."

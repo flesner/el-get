@@ -1,4 +1,4 @@
-;;; el-get --- Manage the external elisp bits and pieces you depend upon
+;;; el-get --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -15,6 +15,7 @@
 (require 'cl-lib)
 (require 'el-get-core)
 (require 'el-get-custom)
+(require 'el-get-recipes)
 
 (defcustom el-get-fossil-clone-hook nil
   "Hook run after fossil clone"

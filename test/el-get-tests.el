@@ -1,11 +1,23 @@
 (require 'el-get)
 (require 'ert nil t)
 
+(el-get-register-method-alias :test :builtin)
+
 (eval-when-compile
   (require 'cl-lib)
   (unless (featurep 'ert)
     (cl-defmacro ert-deftest (name () &body docstring-keys-and-body)
       (message "Skipping tests, ERT is not available"))))
+
+(defun el-get-plist-equal (plist1 plist2)
+  (let ((keys (el-get-plist-keys plist1)))
+    (and (equal (sort keys #'string<)
+                (sort (el-get-plist-keys plist2) #'string<))
+         (cl-loop for key in keys
+                  unless (equal (plist-get plist1 key)
+                                (plist-get plist2 key))
+                  return nil
+                  finally return t))))
 
 (defvar el-get-test-output-buffer nil)
 (when noninteractive
@@ -35,6 +47,7 @@ error.
 Following variables are bound to temporal values:
 * `user-emacs-directory'
 * `package-user-dir'
+* `load-path'
 * `el-get-dir'
 * `el-get-status-file'
 * `el-get-status-cache'
@@ -43,6 +56,7 @@ Following variables are bound to temporal values:
   `(let* ((user-emacs-directory
            (make-temp-file "emacs.d.el-get-testing" 'dir "/"))
           (package-user-dir (locate-user-emacs-file "elpa"))
+          (load-path load-path)
           (el-get-dir (mapconcat #'file-name-as-directory
                                  `(,user-emacs-directory "el-get") ""))
           (el-get-status-file (concat el-get-dir ".status.el"))
@@ -118,6 +132,7 @@ Following variables are bound to temporal values:
    (let* ((pkg 'el-get-test-package)
           (package-archive-upload-base (expand-file-name "pkg-repo" user-emacs-directory))
           (package-archives nil)
+          (package-archive-contents nil)
           (el-get-sources
            `((:name package :post-init nil) ; avoid adding other repos
              (:name el-get-test-package
@@ -126,7 +141,124 @@ Following variables are bound to temporal values:
      (make-directory package-archive-upload-base t)
      (package-upload-file (expand-file-name "pkgs/el-get-test-package.el"
                                             el-get-test-files-dir))
+     (package-read-all-archive-contents)
      (el-get 'sync (mapcar 'el-get-source-name el-get-sources)))))
+
+(ert-deftest el-get-elpa-repo-prio ()
+  "Test :repo priority with ELPA type.  See #2832."
+  (el-get-with-temp-home
+   (require 'package-x)                 ; create local package archive
+   (let* ((package-implements-priorities
+           (boundp 'package-archive-priorities))
+          (package-archive-priorities
+           '(("test-repoA" . 15)
+             ("test-repoB" . 0)
+             ("test-repoC" . 10)))
+          (upload-base-A (expand-file-name "pkg-repoA" user-emacs-directory))
+          (upload-base-B (expand-file-name "pkg-repoB" user-emacs-directory))
+          (upload-base-C (expand-file-name "pkg-repoC" user-emacs-directory))
+          (package-archive-contents nil)
+          (package-archives `(("test-repoA" . ,upload-base-A)
+                              ("test-repoB" . ,upload-base-B)
+                              ("test-repoC" . ,upload-base-C)))
+          (package-check-signature nil)
+          (el-get-sources
+           `((:name package :post-init nil) ; avoid adding other repos
+             (:name el-get-test-package :type elpa)
+             (:name el-get-test-package2 :type elpa
+                    :repo ("test-repoB" . ,upload-base-B)))))
+     (dolist (package-archive-upload-base (list upload-base-A upload-base-B upload-base-C))
+       (make-directory package-archive-upload-base t)
+       (package-upload-file (expand-file-name "pkgs/el-get-test-package.el"
+                                              el-get-test-files-dir))
+       (package-upload-file (expand-file-name "pkgs/el-get-test-package2.el"
+                                              el-get-test-files-dir)))
+     (package-read-all-archive-contents)
+     (cl-letf* (((symbol-function 'package-download-transaction)
+                 (lambda (packages)
+                   (dolist (pkg packages)
+                     (should (equal
+                              (package-desc-archive pkg)
+                              (cl-case (package-desc-name pkg)
+                                (el-get-test-package
+                                 ;; On Emacs 24.5, we just get
+                                 ;; whatever's first, no priorities.
+                                 (if package-implements-priorities
+                                     "test-repoA"
+                                   ;; So essentially skip the check in
+                                   ;; that case.
+                                   (package-desc-archive pkg)))
+                                (el-get-test-package2 "test-repoB")
+                                (t (error "Unexpected package installed"))))))))
+                ((symbol-function 'el-get-elpa-symlink-package)
+                 #'ignore)
+                ((symbol-function 'el-get-post-install)
+                 #'ignore))
+       (el-get 'sync '(el-get-test-package el-get-test-package2))))))
+
+(ert-deftest el-get-update-load-path ()
+  "Check the `load-path' is updated."
+  (el-get-with-temp-home
+   (let* ((recipe-a (list :name 'a :type 'test :compile nil
+                          :non-updatable 1
+                          :build '(progn (make-directory "test-load-path1" t) nil)
+                          :load-path "test-load-path1"))
+          (el-get-sources (list recipe-a))
+          (el-get-default-process-sync t))
+     (el-get 'sync 'a)
+     (should (member (expand-file-name
+                      "test-load-path1" (el-get-package-directory 'a))
+                     load-path))
+     (plist-put recipe-a :load-path "test-load-path2")
+     (plist-put recipe-a :build '(progn (make-directory "test-load-path2" t) nil))
+     (el-get-update 'a)
+     (should (member (expand-file-name
+                      "test-load-path2" (el-get-package-directory 'a))
+                     load-path))
+     (plist-put recipe-a :load-path "test-load-path3")
+     (plist-put recipe-a :non-updatable 3) ; Needs reinstall to change.
+     (plist-put recipe-a :build '(progn (make-directory "test-load-path3" t) nil))
+     (el-get-update 'a)
+     (should (member (expand-file-name
+                      "test-load-path3" (el-get-package-directory 'a))
+                     load-path)))))
+
+(ert-deftest el-get-update-rcp-file-load-path ()
+  "Check the `load-path' is updated."
+  (el-get-with-temp-home
+   (let* ((rcpdir (expand-file-name "el-get-user-recipes" user-emacs-directory))
+          (el-get-recipe-path (cons rcpdir el-get-recipe-path))
+          (recipe-a (list :name 'a :type 'test :compile nil
+                          :non-updatable 1
+                          :build '(progn (make-directory "test-load-path1" t) nil)
+                          :load-path "test-load-path1"))
+          (el-get-default-process-sync t))
+     (make-directory rcpdir t)
+     (with-temp-file (expand-file-name "a.rcp" rcpdir)
+       (pp recipe-a (current-buffer)))
+     (el-get 'sync 'a)
+     (should (member (expand-file-name
+                      "test-load-path1" (el-get-package-directory 'a))
+                     load-path))
+
+     (plist-put recipe-a :load-path "test-load-path2")
+     (plist-put recipe-a :build '(progn (make-directory "test-load-path2" t) nil))
+     (with-temp-file (expand-file-name "a.rcp" rcpdir)
+       (pp recipe-a (current-buffer)))
+     (el-get-update 'a)
+     (should (member (expand-file-name
+                      "test-load-path2" (el-get-package-directory 'a))
+                     load-path))
+
+     (plist-put recipe-a :load-path "test-load-path3")
+     (plist-put recipe-a :non-updatable 3) ; Needs reinstall to change.
+     (plist-put recipe-a :build '(progn (make-directory "test-load-path3" t) nil))
+     (with-temp-file (expand-file-name "a.rcp" rcpdir)
+       (pp recipe-a (current-buffer)))
+     (el-get-update 'a)
+     (should (member (expand-file-name
+                      "test-load-path3" (el-get-package-directory 'a))
+                     load-path)))))
 
 (ert-deftest el-get-elpa-feature ()
   "`:features' option should work for ELPA type recipe."
@@ -136,6 +268,7 @@ Following variables are bound to temporal values:
    (let* ((pkg 'el-get-test-package)
           (package-archive-upload-base (expand-file-name "pkg-repo" user-emacs-directory))
           (package-archives nil)
+          (package-archive-contents nil)
           (el-get-sources
            `((:name package :post-init nil) ; avoid adding other repos
              (:name el-get-test-package
@@ -145,6 +278,7 @@ Following variables are bound to temporal values:
      (make-directory package-archive-upload-base t)
      (package-upload-file (expand-file-name "pkgs/el-get-test-package.el"
                                             el-get-test-files-dir))
+     (package-read-all-archive-contents)
      (should-not (featurep pkg))
      (el-get 'sync (mapcar 'el-get-source-name el-get-sources))
      (should (featurep pkg)))))
@@ -173,6 +307,7 @@ John.Doe-123_@example.com"))
    (require 'package-x)                 ; create local package archive
    (let* ((el-get-allow-insecure nil)
           (pkg 'el-get-test-package)
+          (package-archive-contents nil)
           (package-archive-upload-base (expand-file-name "pkg-repo" user-emacs-directory))
           (package-archives `(("test-repo" . ,package-archive-upload-base)))
           (el-get-sources
@@ -181,6 +316,7 @@ John.Doe-123_@example.com"))
      (make-directory package-archive-upload-base t)
      (package-upload-file (expand-file-name "pkgs/el-get-test-package.el"
                                             el-get-test-files-dir))
+     (package-read-all-archive-contents)
      (el-get 'sync 'el-get-test-package))))
 
 (defconst secure-urls '("https://example.com"
@@ -232,3 +368,121 @@ John.Doe-123_@example.com"))
                (lambda (package url)
                  (error "Leave 'el-get-insecure-check to git"))))
       (should (el-get-do-update "dummy")))))
+
+(ert-deftest el-get-bundle-parse-name ()
+  "Test parsing of different el-get-bundle name formats"
+  (require 'el-get-bundle)
+  (should (el-get-plist-equal
+           (el-get-bundle-parse-name 'el-get)
+           '(:name el-get)))
+  (should (el-get-plist-equal
+           (el-get-bundle-parse-name 'owner/el-get)
+           '(:name el-get :type github :pkgname "owner/el-get")))
+  (should (el-get-plist-equal
+           (el-get-bundle-parse-name 'gist:the-gist-id:el-get)
+           '(:name el-get :type git :url "https://gist.github.com/the-gist-id.git")))
+  (should (el-get-plist-equal
+           (el-get-bundle-parse-name 'elpa:el-get)
+           '(:name el-get :type elpa))))
+
+(defun el-get-test-compute-new-status-equal (status1 status2)
+  "Check equality for `el-get-compute-new-status' results."
+  (and (el-get-plist-equal (nth 0 status1) (nth 0 status2))
+       (equal (nth 1 status1) (nth 1 status2))
+       (el-get-plist-equal (nth 2 status1) (nth 2 status2))
+       (el-get-plist-equal (nth 3 status1) (nth 3 status2))))
+
+(ert-deftest el-get-test-compute-new-status ()
+  "Test `el-get-compute-new-status'."
+  (let* ((old '(:name a
+                      :type git
+                      :load-path "load-old"
+                      :depends (depends old)
+                      :build (("build" "old"))
+                      :build/gnu-linux (("build/gnu-linux" "old"))
+                      :url "http://example.com/url/old"))
+         (new '(:name a
+                      :type git
+                      :load-path "load-new"
+                      :depends (depends new)
+                      :build (("build" "new"))
+                      :build/gnu-linux (("build/gnu-linux" "new"))
+                      :url "http://example.com/url/new"))
+         (expected '((:name a
+                            :type git
+                            :load-path "load-new"
+                            :depends (depends old)
+                            :build (("build" "old"))
+                            :build/gnu-linux (("build/gnu-linux" "old"))
+                            :url "http://example.com/url/old")
+                     (reinstall)
+                     (:depends (depends new)
+                               :build (("build" "new"))
+                               :build/gnu-linux (("build/gnu-linux" "new"))
+                               :url "http://example.com/url/new")
+                     (:depends (depends old)
+                               :build (("build" "old"))
+                               :build/gnu-linux (("build/gnu-linux" "old"))
+                               :url "http://example.com/url/old")))
+         (update-expected '((:name a
+                                   :type git
+                                   :load-path "load-new"
+                                   :depends (depends new)
+                                   :build (("build" "new"))
+                                   :build/gnu-linux (("build/gnu-linux" "new"))
+                                   :url "http://example.com/url/old")
+                            (reinstall)
+                            (:url "http://example.com/url/new")
+                            (:url "http://example.com/url/old"))))
+    (should (el-get-test-compute-new-status-equal
+             (el-get-compute-new-status 'init old new)
+             expected))
+    (should (el-get-test-compute-new-status-equal
+             (el-get-compute-new-status 'update old new)
+             update-expected))
+    (should (el-get-test-compute-new-status-equal
+             (el-get-compute-new-status 'reinstall old new)
+             (list new nil nil nil)))))
+
+(ert-deftest el-get-test-compute-new-status-2 ()
+  "Test `el-get-compute-new-status'."
+  (let* ((old '(:name a
+                      :type git
+                      :load-path "load-old"
+                      :depends (depends old)
+                      :build (("build" "old"))
+                      :build/gnu-linux (("build/gnu-linux" "old"))
+                      :url "http://example.com/url/old"))
+         (new '(:name a
+                      :type git
+                      :load-path "load-new"
+                      :depends (depends new)
+                      :build (("build" "new"))
+                      :build/gnu-linux (("build/gnu-linux" "new"))
+                      :url "http://example.com/url/old"))
+         (init-result (el-get-compute-new-status 'init old new))
+         (init-expected '((:name a
+                                 :type git
+                                 :load-path "load-new"
+                                 :depends (depends old)
+                                 :build (("build" "old"))
+                                 :build/gnu-linux (("build/gnu-linux" "old"))
+                                 :url "http://example.com/url/old")
+                          (update reinstall)
+                          (:depends (depends new)
+                                    :build (("build" "new"))
+                                    :build/gnu-linux (("build/gnu-linux" "new")))
+                          (:depends (depends old)
+                                    :build (("build" "old"))
+                                    :build/gnu-linux (("build/gnu-linux" "old")))))
+         (update-result (el-get-compute-new-status 'update old new))
+         (update-expected '((:name a
+                                   :type git
+                                   :load-path "load-new"
+                                   :depends (depends new)
+                                   :build (("build" "new"))
+                                   :build/gnu-linux (("build/gnu-linux" "new"))
+                                   :url "http://example.com/url/old")
+                            nil nil nil)))
+    (should (el-get-test-compute-new-status-equal init-result init-expected))
+    (should (el-get-test-compute-new-status-equal update-result update-expected))))

@@ -1,4 +1,4 @@
-;;; el-get --- Manage the external elisp bits and pieces you depend upon
+;;; el-get --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -65,6 +65,9 @@ filename.el ;;; filename.el --- description"
 ;;;
 (defun el-get-emacswiki-retrieve-package-list ()
   "return a list of (URL PACKAGE DESCRIPTION) from emacswiki"
+  ;; Set this cookie because we promise to be good and download
+  ;; only the one page we need, not the entire wiki.
+  (url-cookie-store "botcheck" "1" nil "www.emacswiki.org" "/")
   (with-current-buffer
       (url-retrieve-synchronously el-get-emacswiki-elisp-file-list-url)
     ;; skip HTTP headers
@@ -126,8 +129,8 @@ fails, you can force the update to be done in-process by running
 this with a prefix arg (noninteractively: set optional arg
 `in-process' non-nil)."
   (interactive
-   (list (let ((dummy (unless (file-directory-p el-get-recipe-path-emacswiki)
-                        (make-directory el-get-recipe-path-emacswiki))))
+   (list (let ((_dummy (unless (file-directory-p el-get-recipe-path-emacswiki)
+                         (make-directory el-get-recipe-path-emacswiki))))
            (read-directory-name "emacswiki recipes go to: "
                                 el-get-recipe-path-emacswiki))
          current-prefix-arg))
@@ -137,7 +140,7 @@ this with a prefix arg (noninteractively: set optional arg
         (el-get-notify "el-get: EmacsWiki"
                        "EmacsWiki local recipe list refreshed"))
     (let* ((name "*el-get-emacswiki*")
-           (dummy (when (get-buffer name) (kill-buffer name)))
+           (_dummy (when (get-buffer name) (kill-buffer name)))
            (args
             (format
              "-Q -batch -L %s -L %s -l %s -f el-get-emacswiki-build-local-recipes %s"
@@ -151,7 +154,7 @@ this with a prefix arg (noninteractively: set optional arg
       (message "%s %s" el-get-emacs args)
       (set-process-sentinel
        process
-       #'(lambda (proc event)
+       #'(lambda (proc _event)
            (when (eq (process-status proc) 'exit)
              (el-get-notify "el-get: EmacsWiki"
                             "EmacsWiki local recipe list refreshed")))))))

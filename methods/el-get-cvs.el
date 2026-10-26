@@ -1,4 +1,4 @@
-;;; el-get --- Manage the external elisp bits and pieces you depend upon
+;;; el-get --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -14,6 +14,8 @@
 
 (require 'el-get-core)
 (require 'el-get-recipes)
+
+(declare-function el-get-sudo-password-process-filter "el-get-apt-get")
 
 (defcustom el-get-cvs-checkout-hook nil
   "Hook run after cvs checkout."
@@ -38,12 +40,12 @@ Enable this if you want el-get to honor these settings"
                             (assoc "http" url-proxy-services))
                        (cdr (assoc "http" url-proxy-services))
                      nil)))
-        port ret
+        port
         (user "")
         (password "")
-        (url-proxy url))
+        (_url-proxy url))
     (if (or (not proxy) (string= proxy ""))
-        (symbol-value 'ret)
+        nil
       (when (string-match "^https?://" proxy)
         (setq proxy (replace-match "" nil nil proxy)))
       (when (string-match "^\\(.*\\)@" proxy)
@@ -55,11 +57,10 @@ Enable this if you want el-get to honor these settings"
       (when (string-match "^\\(.*\\):\\([0-9]+\\)$" proxy)
         (setq port (match-string 2 proxy))
         (setq proxy (match-string 1 proxy)))
-      (setq ret `(:user ,user
-                        :password ,password
-                        :proxy ,proxy
-                        :port ,port))
-      (symbol-value 'ret))))
+      `(:user ,user
+              :password ,password
+              :proxy ,proxy
+              :port ,port))))
 
 (defun el-get-cvs-checkout-proxy-url (url)
   "Checkout proxy URL"
@@ -83,7 +84,7 @@ Enable this if you want el-get to honor these settings"
             (setq cvs-proxy (concat cvs-proxy ";proxypassword=" tmp))))
         (when (string-match ":pserver:" ret)
           (setq ret (replace-match (concat ":pserver" cvs-proxy ":") t t ret)))))
-    (symbol-value 'ret)))
+    ret))
 
 (defun el-get-cvs-checkout (package urlp post-install-fun)
   "cvs checkout the package."

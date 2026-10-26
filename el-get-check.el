@@ -1,4 +1,4 @@
-;;; el-get-recipes.el --- Manage the external elisp bits and pieces you depend upon
+;;; el-get-recipes.el --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -108,14 +108,6 @@ object or a file path."
       (insert-file-contents file-or-buffer)
       (el-get-check-recipe-in-current-buffer file-or-buffer))))
 
-(eval-and-compile
-  (unless (fboundp 'file-name-base)     ; new in 24.3
-    (defun file-name-base (&optional filename)
-      "Return the base name of the FILENAME: no directory, no extension.
-FILENAME defaults to `buffer-file-name'."
-      (file-name-sans-extension
-       (file-name-nondirectory (or filename (buffer-file-name)))))))
-
 (defvar el-get-check-warning-buffer)
 (defvar el-get-check-error-count)
 
@@ -177,6 +169,10 @@ FILENAME defaults to `buffer-file-name'."
                    (eq type 'git) (string-match "//github.com/" url))
           (el-get-check-warning :warning
             "Use `:type github' for github type recipe"))
+        ;; Is go type used?
+        (when (eq type 'go)
+          (el-get-check-warning :warning
+            "Do not use `:type go', it will fail with modern (1.16+) go tools"))
         ;; Warn when `:autoloads nil' is specified.
         (when (and (not (memq 'autoloads el-get-check-suppressed-warnings))
                    (null autoloads) (plist-member recipe :autoloads))
@@ -197,7 +193,7 @@ FILENAME defaults to `buffer-file-name'."
             "Usage of integers for :builtin is obsolete.
   Use a version string like \"24.3\" instead.")))
       ;; Check for shell interpolated :build commands
-      (let ((safe-functions '(backquote-list*
+      (let ((_safe-functions '(backquote-list*
                               el-get-load-path el-get-package-exists-p
                               el-get-package-directory el-get-print-to-string
                               el-get-verbose-message

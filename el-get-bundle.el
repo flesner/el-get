@@ -1,4 +1,4 @@
-;;; el-get-bundle.el --- An el-get wrapper
+;;; el-get-bundle.el --- An el-get wrapper -*- lexical-binding: t; -*-
 
 ;; Author: INA Lintaro <tarao.gnn at gmail.com>
 ;; URL: https://github.com/tarao/bundle-el/tree/el-get
@@ -24,12 +24,12 @@
   :group 'el-get-bundle)
 
 (defcustom el-get-bundle-sync t
-  "t means to run el-get with the argument 'sync.
+  "t means to run el-get with the argument \\='sync.
 The default can be overriden on a per-package basis by adding one of
-`:bundle-async [t|nil]'
-`:bundle-sync [t|nil]
+`:bundle-async [t|nil]\\='
+`:bundle-sync [t|nil]\\='
 to the list of keywords that follow
-`el-get-bundle PACKAGE|el-get-bundle FEATURE in PACKAGE'."
+`el-get-bundle PACKAGE|el-get-bundle FEATURE in PACKAGE\\='."
   :type 'boolean
   :group 'el-get-bundle)
 
@@ -89,7 +89,7 @@ to the list of keywords that follow
    (t 'elpa)))
 
 (defun el-get-bundle-parse-name (sym)
-  (let ((spec (split-string (format "%s" sym) ":")) s)
+  (let ((spec (split-string (format "%s" sym) ":")))
     (when (string= (or (nth 0 spec) "") "github") (setq spec (cdr spec)))
     (cond
      ((and (> (length spec) 2) (string= (car spec) "gist"))
@@ -97,18 +97,17 @@ to the list of keywords that follow
       (let* ((id (nth 1 spec))
              (name (intern (or (nth 2 spec) id)))
              (type 'git) (url (el-get-bundle-gist-url id)))
-        (plist-put (plist-put (plist-put s :name name) :type type) :url url)))
+        (list :name name :type type :url url)))
      ((> (length spec) 1)
       ;; type:name
       (let ((name (intern (nth 1 spec))) (type (intern (nth 0 spec))))
-      (plist-put (plist-put s :name name) :type type)))
+        (list :name name :type type)))
      ((= (length (split-string (or (nth 0 spec) "") "/")) 2)
       ;; user/repository
       (let ((name (intern (replace-regexp-in-string "^.*/" "" (nth 0 spec))))
             (type 'github) (pkgname (nth 0 spec)))
-        (plist-put (plist-put (plist-put s :name name) :type type)
-                   :pkgname pkgname)))
-     (t (plist-put s :name sym)))))
+        (list :name name :type type :pkgname pkgname)))
+     (t (list :name sym)))))
 
 (defun el-get-bundle-init-id (callsite)
   (let ((pair (assoc callsite el-get-bundle-init-count-alist)))
@@ -146,7 +145,7 @@ to the list of keywords that follow
       (let* ((pair (assoc package el-get-bundle-init-alist))
              (inits (cdr pair)))
         (if pair
-            (setcdr pair (add-to-list 'inits init-file))
+            (setcdr pair (cons init-file inits))
           (push (cons package (list init-file)) el-get-bundle-init-alist)))
       ;; generate .el file
       (when (or (not (file-exists-p el))
@@ -168,12 +167,12 @@ to the list of keywords that follow
     ;; merge features
     (when (plist-member def :features)
       (let ((old (el-get-as-list (plist-get def :features))))
-        (dolist (f old) (add-to-list 'fs f))
+        (dolist (f old) (push f fs))
         (setq src (plist-put src :features fs))))
     ;; merge depends
     (when (plist-member def :depends)
       (let ((old (el-get-as-list (plist-get def :depends))))
-        (dolist (d old) (add-to-list 'ds d))
+        (dolist (d old) (push d ds))
         (setq src (plist-put src :depends ds))))
 
     ;; merge src with the oriiginal definition
@@ -216,7 +215,7 @@ to the list of keywords that follow
 
 Invalidate byte-compiled package initialization forms of
 PACKAGE (for future recompilation)."
-  (let ((inits (assoc package el-get-bundle-init-alist)))
+  (let ((_inits (assoc package el-get-bundle-init-alist)))
     (dolist (name (cdr (assoc package el-get-bundle-init-alist)))
       (let ((file (concat name ".elc")))
         (when (file-exists-p file)
@@ -295,7 +294,7 @@ version is used if `el-get-bundle-byte-compile' is non-nil."
                            (plist-get src :features)))
       ;; put the feature into the features list
       (let ((fs (plist-get src :features)))
-        (add-to-list 'fs package)
+        (push package fs)
         (setq src (plist-put src :features fs))))
     ;; init script
     (setq src (plist-put src :after form))

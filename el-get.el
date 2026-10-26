@@ -1,4 +1,4 @@
-;;; el-get.el --- Manage the external elisp bits and pieces you depend upon
+;;; el-get.el --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2012 Dimitri Fontaine
 ;;
@@ -192,13 +192,6 @@
 (require 'el-get-list-packages)         ; menu and `el-get-describe' facilities
 (require 'el-get-autoloading)           ; manages updating el-get's loaddefs.el
 
-;; optional features
-(let* ((el-get-dir (file-name-directory load-file-name))
-       (bundle (expand-file-name "el-get-bundle" el-get-dir)))
-  (autoload 'el-get-bundle-el-get bundle)
-  (autoload 'el-get-bundle bundle nil nil 'macro)
-  (autoload 'el-get-bundle! bundle nil nil 'macro))
-
 (defvar el-get-next-packages nil
   "List of packages to install next, used when dealing with dependencies.")
 
@@ -357,7 +350,7 @@ to wait until PACKAGE is loaded."
     (el-get-verbose-message "el-get-init: " init-deps)
     (cl-loop for p in init-deps do (el-get-do-init p) collect p)))
 
-(defun el-get-do-init (package &optional package-status-alist)
+(defun el-get-do-init (package &optional _package-status-alist)
   "Make the named PACKAGE available for use.
 
 Add PACKAGE's directory (or `:load-path' if specified) to the
@@ -365,20 +358,25 @@ Add PACKAGE's directory (or `:load-path' if specified) to the
 `Info-directory-list', and `require' its `:features'.  Will be
 called by `el-get' (usually at startup) for each installed package."
   (declare (advertised-calling-convention (package) "Feb 2015"))
-    (let ((psym (el-get-as-symbol package)))
-      (when (and (not (eq psym 'el-get)) ; el-get recipe handles reloading
-                 (memq psym (bound-and-true-p package-activated-list))
-                 (not (memq psym el-get-activated-list))
-                 (package-installed-p psym)
-                 (not (eq 'elpa (el-get-package-method package))))
-        (lwarn 'el-get :warning
-               "The package `%s' has already been loaded by
+  (let ((psym (el-get-as-symbol package)))
+    (when (and (not (eq psym 'el-get)) ; el-get recipe handles reloading
+               (memq psym (bound-and-true-p package-activated-list))
+               (not (memq psym el-get-activated-list))
+               (package-installed-p psym)
+               (not (eq 'elpa (el-get-package-method package))))
+      (lwarn '(el-get double-activation) :warning
+             "The package `%s' has already been loaded by
 package.el, attempting to load el-get version instead. To avoid
-this warning either uninstall one of the el-get or package.el
-version of %s, or call `el-get' before `package-initialize' to
-prevent package.el from loading it."  package package)))
+double-activation, do one of:
+- Call `el-get' before `package-initialize'%s
+  to el-get version only.
+- Set package to `:type elpa' in `el-get-sources'
+  to get package.el version only.
+" package (if (boundp 'early-init-file)
+              (concat " (in " early-init-file ")")
+            ""))))
   (when el-get-auto-update-cached-recipes
-    (el-get-merge-properties-into-status package 'init :noerror t))
+    (el-get-merge-properties-into-status package 'init))
   (condition-case err
       (let* ((el-get-sources (el-get-package-status-recipes))
              (source   (el-get-read-package-status-recipe package))
@@ -393,7 +391,7 @@ prevent package.el from loading it."  package package)))
              (before   (plist-get source :before))
              (postinit (plist-get source :post-init))
              (after    (plist-get source :after))
-             (pkgname  (plist-get source :pkgname))
+             (_pkgname  (plist-get source :pkgname))
              (pdir     (el-get-package-directory package)))
 
         (el-get-error-unless-required-emacs-version source)
@@ -490,7 +488,7 @@ PACKAGE may be either a string or the corresponding symbol."
   ;; Start the chain of dependency installation
   (el-get-install-next-packages))
 
-(defun el-get-install-next-packages (&rest ignored)
+(defun el-get-install-next-packages (&rest _ignored)
   "Run as part of `el-get-post-init-hooks' when dealing with dependencies."
   (let ((package (pop el-get-next-packages)))
     (el-get-verbose-message "el-get-install-next-packages: %s" package)
@@ -582,13 +580,13 @@ PACKAGE may be either a string or the corresponding symbol."
       (funcall install package url 'el-get-post-install)
       (message "el-get install %s" package))))
 
-(defun el-get-reload (package &optional package-status-alist)
+(defun el-get-reload (package &optional _package-status-alist)
   "Reload PACKAGE."
+  (declare (advertised-calling-convention (package) "Feb 2015"))
   (interactive
    (progn
      (el-get-clear-status-cache)
      (list (el-get-read-package-with-status "Reload" "installed"))))
-  (declare (advertised-calling-convention (package) "Feb 2015"))
   (el-get-verbose-message "el-get-reload: %s" package)
   (el-get-with-status-sources ()
     (let* ((all-features features)
@@ -636,7 +634,7 @@ PACKAGE may be either a string or the corresponding symbol."
 (defun el-get-post-update-build (package)
   "Function to call after building the package while updating it."
   ;; fix trailing failed installs
-  (el-get-merge-properties-into-status package 'update :noerror t)
+  (el-get-merge-properties-into-status package 'update)
   (when (string= (el-get-read-package-status package) "required")
     (el-get-save-package-status package "installed"))
   (el-get-invalidate-autoloads package)
@@ -750,19 +748,6 @@ itself.")
     (let ((el-get-elpa-do-refresh 'once))
       (mapc 'el-get-update (el-get-list-package-names-with-status "installed")))))
 
-(eval-and-compile
-  (unless (fboundp 'user-error)         ; new in 24.3
-    (defun user-error (format &rest args)
-      "Signal a pilot error, making error message by passing all args to `format'.
-In Emacs, the convention is that error messages start with a capital
-letter but *do not* end with a period.  Please follow this convention
-for the sake of consistency.
-This is just like `error' except that `user-error's are expected to be the
-result of an incorrect manipulation on the part of the user, rather than the
-result of an actual problem."
-      (while t
-        (signal 'user-error (list (apply #'format format args)))))))
-
 ;;;###autoload
 (defun el-get-update-packages-of-type (type)
   "Update all installed packages of type TYPE."
@@ -844,17 +829,17 @@ result of an actual problem."
 (defun el-get-cleanup (packages)
   "Clean up packages installed with el-get.
 
-In particular, keep all of the packages listed in the 'packages
+In particular, keep all of the packages listed in the \\='packages
 argument list, and also keep all of the packages that the listed
 packages depend on.  Get rid of everything else.  Note that
 el-get-cleanup will not remove el-get itself, regardless of
-whether or not el-get is listed in the 'packages argument list.
+whether or not el-get is listed in the \\='packages argument list.
 
 This is useful, for example, when we want to remove all packages not
 explicitly declared in the user-init-file (.emacs)."
   (let* ((packages-to-keep (el-get-dependencies
                             (mapcar 'el-get-as-symbol
-                                    (add-to-list 'packages 'el-get))))
+                                    (cons 'el-get packages))))
          (packages-to-remove (cl-set-difference
                               (mapcar 'el-get-as-symbol
                                       (el-get-list-package-names-with-status
@@ -951,8 +936,7 @@ considered \"required\"."
                                    unless (member p init-deps)
                                    collect p)
                         (mapcar 'el-get-as-symbol required)))
-         (install-deps (el-get-dependencies to-install))
-         done)
+         (install-deps (el-get-dependencies to-install)))
     (when req-inits       ; we can't init a pkg unless it's installed!
       (setq install-deps (append req-inits install-deps))
       (setq init-deps (cl-set-difference init-deps req-inits)))
@@ -960,38 +944,38 @@ considered \"required\"."
     (el-get-verbose-message "el-get-init-and-install: install %S" install-deps)
     (el-get-verbose-message "el-get-init-and-install: init %S" init-deps)
 
-    (cl-loop for p in install-deps
-             when (el-get-with-errors-as-warnings (format "while installing %s: " p)
-                    (el-get-do-install p))
-             collect p into done)
-    (cl-loop for p in init-deps
-             when (el-get-with-errors-as-warnings (format "while initializing %s: " p)
-                    (el-get-do-init p))
-             collect p into done)
-    done))
+    (append
+     (cl-loop for p in install-deps
+              when (el-get-with-errors-as-warnings (format "while installing %s: " p)
+                     (el-get-do-install p))
+              collect p)
+     (cl-loop for p in init-deps
+              when (el-get-with-errors-as-warnings (format "while initializing %s: " p)
+                     (el-get-do-init p))
+              collect p))))
 
 ;;;###autoload
 (defun el-get (&optional sync &rest packages)
   "Ensure that packages have been downloaded once and init them as needed.
 
-This will not update the sources by using `apt-get install' or
-`git pull', but it will ensure that:
+This will not update the sources by using `apt-get install\\=' or
+`git pull\\=', but it will ensure that:
 
 * the packages have been installed
 * load-path is set so their elisp files can be found
 * Info-directory-list is set so their info files can be found
 * Autoloads have been prepared and evaluated for each package
-* Any post-installation setup (e.g. `(require 'feature)') happens
+* Any post-installation setup (e.g. `(require \\='feature)\\=') happens
 
 When SYNC is nil (the default), all installations run
 concurrently, in the background.
 
-When SYNC is 'sync, each package will be installed synchronously,
+When SYNC is \\='sync, each package will be installed synchronously,
 and any error will stop it all.
 
-Please note that the `el-get-init' part of `el-get' is always
-done synchronously. There's `byte-compile' support though, and
-the packages you use are welcome to use `autoload' too.
+Please note that the `el-get-init\\=' part of `el-get\\=' is always
+done synchronously. There\\='s `byte-compile\\=' support though, and
+the packages you use are welcome to use `autoload\\=' too.
 
 PACKAGES is expected to be a list of packages you want to install
 or init.  When PACKAGES is omited (the default), the list of

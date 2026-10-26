@@ -1,4 +1,4 @@
-;;; el-get --- Manage the external elisp bits and pieces you depend upon
+;;; el-get --- Manage the external elisp bits and pieces you depend upon -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2010-2011 Dimitri Fontaine
 ;;
@@ -25,8 +25,12 @@
   :group 'el-get
   :type 'hook)
 
-(defun el-get-go-install (package url post-install-fun)
+(defun el-get-go-install (package _url post-install-fun)
   "go install PACKAGE"
+  (lwarn '(el-get deprecation) :warning
+         "Trying to install `%s' which has :type go.
+This will likely fail with modern (1.16+) versions of go tools."
+         package)
   (let* ((gopath (getenv "GOPATH"))
          (source (el-get-package-def package))
          (pkgname (el-get-as-string (plist-get source :pkgname)))
